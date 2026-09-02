@@ -4,7 +4,6 @@ requests
 pillow
 ddgs
 moviepy>=2.0
-torch
-torchaudio
-chatterbox-tts
-anthropic
+kokoro>=0.9.4
+soundfile
+numpy
