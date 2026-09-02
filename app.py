@@ -2,9 +2,9 @@ import os
 import streamlit as st
 import pandas as pd
 
-from modules.content import generate_script
+from modules.content import generate_script, estimate_item_count
 from modules.images import fetch_image_for_item
-from modules.tts_engine import synthesize
+from modules.tts_engine import synthesize, LANGUAGES
 from modules.video_builder import build_video
 
 st.set_page_config(page_title="Gerador de Vídeos Educativos", page_icon="🎬", layout="centered")
@@ -17,7 +17,17 @@ os.makedirs("output/audio", exist_ok=True)
 # ---------- 1. Configuração ----------
 st.header("1. Tema do vídeo")
 topic = st.text_input("Sobre o que é o vídeo?", "Monstros clássicos de filmes de terror")
-n_items = st.slider("Quantos itens/cards no vídeo?", 2, 10, 4)
+
+duration_seconds = st.slider("Duração aproximada do vídeo (segundos)", 10, 120, 30, step=5)
+n_items = estimate_item_count(duration_seconds)
+st.caption(
+    f"Isso deve gerar em torno de **{n_items} itens/cards**. "
+    "A duração final pode variar um pouco — ela depende do tamanho real do texto "
+    "de cada narração, só é conhecida com exatidão depois de gerar o áudio."
+)
+
+language_label = st.selectbox("Idioma falado da narração", list(LANGUAGES.keys()))
+language = LANGUAGES[language_label]
 
 anthropic_key = st.text_input(
     "Chave da API Anthropic (opcional, deixe em branco para gerar texto manualmente)",
@@ -45,7 +55,7 @@ if "script" not in st.session_state:
 
 if st.button("📝 Gerar roteiro"):
     with st.spinner("Gerando roteiro..."):
-        st.session_state.script = generate_script(topic, n_items, anthropic_key or None)
+        st.session_state.script = generate_script(topic, n_items, anthropic_key or None, language)
 
 if st.session_state.script:
     st.header("3. Revise e edite o roteiro")
@@ -76,7 +86,8 @@ if st.session_state.script:
             # 2. gerar áudio
             progress.progress(i / total, text=f"Gerando voz: {title}")
             audio_path = f"output/audio/{i}.wav"
-            synthesize(narration, audio_path, reference_voice_path, exaggeration=exaggeration)
+            synthesize(narration, audio_path, reference_voice_path,
+                       language_id=language, exaggeration=exaggeration)
 
             items.append({
                 "title": title,
@@ -90,7 +101,15 @@ if st.session_state.script:
         build_video(items, out_path)
         progress.progress(1.0, text="Pronto!")
 
-        st.success("Vídeo gerado com sucesso!")
+        import wave
+        total_audio_s = sum(
+            wave.open(item["audio_path"]).getnframes() / wave.open(item["audio_path"]).getframerate()
+            for item in items
+        )
+        st.success(
+            f"Vídeo gerado com sucesso! Duração real: ~{total_audio_s:.0f}s "
+            f"(você pediu {duration_seconds}s)."
+        )
         st.video(out_path)
         with open(out_path, "rb") as f:
             st.download_button("⬇️ Baixar vídeo", f, file_name="video_final.mp4")
