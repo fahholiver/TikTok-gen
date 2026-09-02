@@ -33,13 +33,28 @@ Abre em `http://localhost:8501`.
 ## Como funciona o pipeline
 
 1. `modules/content.py` — gera a lista de itens (título, texto de busca de
-   imagem, texto de narração) a partir do tema.
+   imagem, texto de narração) a partir do tema e do idioma escolhido. O número
+   de itens é **estimado** a partir da duração desejada (segundos ÷ ~7s por item).
 2. `modules/images.py` — busca e baixa uma imagem por item, via DuckDuckGo
    (sem precisar de chave de API).
-3. `modules/tts_engine.py` — gera o áudio da narração clonando a voz de
-   referência que você enviar (ChatterboxTTS).
+3. `modules/tts_engine.py` — gera o áudio da narração no idioma escolhido
+   (pt/en/es/de), clonando a voz de referência que você enviar
+   (Chatterbox **Multilingual** TTS, suporta 23 idiomas ao todo).
 4. `modules/video_builder.py` — monta os "cards" (imagem + título + legenda)
    sincronizados com o áudio e concatena tudo em um vídeo vertical 1080x1920.
+
+### Sobre a duração escolhida
+
+A duração em segundos que você define na interface é usada só para **estimar**
+quantos itens gerar. A duração final real depende de quanto texto cada
+narração tem — ela só é conhecida com exatidão depois que o áudio de cada
+item é gerado, e aparece na tela ao final da renderização.
+
+### Sobre o idioma e a voz de referência
+
+Se for clonar uma voz (upload de áudio de referência), use um áudio **no
+mesmo idioma** selecionado na interface — caso contrário a voz clonada pode
+sair com sotaque estranho ou pronúncia ruim.
 
 ## Trocar o motor de voz
 
