@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import pandas as pd
 
-from modules.content import generate_script, estimate_item_count
+from modules.content import generate_script, estimate_item_count, is_ollama_available
 from modules.images import fetch_image_for_item
 from modules.tts_engine import synthesize, LANGUAGES
 from modules.video_builder import build_video
@@ -29,25 +29,43 @@ st.caption(
 language_label = st.selectbox("Idioma falado da narração", list(LANGUAGES.keys()))
 language = LANGUAGES[language_label]
 
-anthropic_key = st.text_input(
-    "Chave da API Anthropic (opcional, deixe em branco para gerar texto manualmente)",
-    type="password",
+st.subheader("IA para escrever o roteiro (gratuita)")
+ollama_ok = is_ollama_available()
+if ollama_ok:
+    st.success("✅ Ollama detectado rodando localmente — roteiro será gerado por IA, de graça.")
+else:
+    st.warning(
+        "⚠️ Ollama não encontrado em localhost:11434. Instale grátis em "
+        "[ollama.com](https://ollama.com) e rode `ollama pull llama3.1` para "
+        "ativar a geração automática por IA. Por enquanto, o roteiro sairá "
+        "como um placeholder simples pra você editar na mão."
+    )
+ollama_model = st.text_input(
+    "Modelo do Ollama a usar", "llama3.1",
+    help="Qualquer modelo que você já tenha baixado com `ollama pull <modelo>`. "
+         "Ex: llama3.1, mistral, qwen2.5, gemma2.",
 )
 
 st.header("2. Voz de narração")
-voice_file = st.file_uploader(
-    "Envie um áudio de referência (5-10s, .wav/.mp3) para clonar a voz. "
-    "Deixe vazio para usar a voz padrão do modelo.",
-    type=["wav", "mp3"],
+st.caption(
+    "Motor de voz: **Kokoro** (leve, roda até em servidores gratuitos). "
+    "Ele não clona a sua voz — usa vozes prontas, mas naturais."
 )
-reference_voice_path = None
-if voice_file:
-    reference_voice_path = os.path.join("assets/voice_samples", voice_file.name)
-    with open(reference_voice_path, "wb") as f:
-        f.write(voice_file.read())
-    st.audio(reference_voice_path)
-
-exaggeration = st.slider("Expressividade da voz", 0.0, 1.0, 0.5)
+VOICE_OPTIONS = {
+    "pt": {"Feminina (Dora)": "pf_dora", "Masculina (Alex)": "pm_alex", "Masculina (Santa)": "pm_santa"},
+    "en": {"Feminina (Heart)": "af_heart", "Feminina (Bella)": "af_bella", "Masculina (Michael)": "am_michael"},
+    "es": {"Feminina (Dora)": "ef_dora", "Masculina (Alex)": "em_alex", "Masculina (Santa)": "em_santa"},
+    "de": {"Padrão (espeak-ng, mais robótica)": None},
+}
+voice_choices = VOICE_OPTIONS.get(language, {})
+voice_label = st.selectbox("Voz", list(voice_choices.keys()))
+selected_voice = voice_choices[voice_label]
+if language == "de":
+    st.info(
+        "ℹ️ O Kokoro não tem suporte nativo a alemão ainda, então esse idioma "
+        "usa o espeak-ng como reserva — funciona, mas soa mais robótica que "
+        "as vozes em português/inglês/espanhol."
+    )
 
 # ---------- 2. Gerar roteiro ----------
 if "script" not in st.session_state:
@@ -55,7 +73,10 @@ if "script" not in st.session_state:
 
 if st.button("📝 Gerar roteiro"):
     with st.spinner("Gerando roteiro..."):
-        st.session_state.script = generate_script(topic, n_items, anthropic_key or None, language)
+        st.session_state.script = generate_script(
+            topic, n_items, language,
+            use_ollama=ollama_ok, ollama_model=ollama_model,
+        )
 
 if st.session_state.script:
     st.header("3. Revise e edite o roteiro")
@@ -86,8 +107,7 @@ if st.session_state.script:
             # 2. gerar áudio
             progress.progress(i / total, text=f"Gerando voz: {title}")
             audio_path = f"output/audio/{i}.wav"
-            synthesize(narration, audio_path, reference_voice_path,
-                       language_id=language, exaggeration=exaggeration)
+            synthesize(narration, audio_path, language_id=language, voice=selected_voice)
 
             items.append({
                 "title": title,
