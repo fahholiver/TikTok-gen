@@ -1,0 +1,10 @@
+streamlit
+pandas
+requests
+pillow
+ddgs
+moviepy>=2.0
+torch
+torchaudio
+chatterbox-tts
+anthropic
