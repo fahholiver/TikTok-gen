@@ -1,47 +1,31 @@
 """
-Geração automática do roteiro do vídeo.
+Geração automática do roteiro do vídeo. Dois modos:
 
-Formato de saída (lista de dicts), um item por "card" do vídeo:
+1) MODO LISTA — vários "cards", um por item, formato:
     {
-        "title": "Mummy",              # texto grande que aparece sobre a imagem
-        "image_query": "egyptian mummy movie", # o que buscar na web
+        "title": "Mummy",
+        "image_query": "egyptian mummy movie",
         "narration": "This is a mummy. It's a corpse wrapped in cloth..."
     }
 
-Duas formas de gerar:
-1) Com uma API de LLM (Anthropic) — melhor qualidade, precisa de ANTHROPIC_API_KEY.
-2) Fallback local simples — sem API, usa um template básico (edite manualmente).
-"""
-
-"""
-Geração automática do roteiro do vídeo.
-
-Formato de saída (lista de dicts), um item por "card" do vídeo:
-    {
-        "title": "Mummy",              # texto grande que aparece sobre a imagem
-        "image_query": "egyptian mummy movie", # o que buscar na web
-        "narration": "This is a mummy. It's a corpse wrapped in cloth..."
-    }
+2) MODO COMPARAÇÃO — estilo "coruja apontando", comparando 2 itens:
+   mostra item 1 → mostra item 2 e pergunta a diferença → coruja aponta
+   pro item 1 e explica → coruja vira e explica o item 2.
 
 Geração 100% gratuita, com duas opções de IA:
 1. **Groq** (https://console.groq.com) — API na nuvem, gratuita, sem cartão
-   de crédito. Funciona tanto local quanto no Streamlit Cloud (é a opção
-   recomendada pra quem hospedou o app na nuvem).
-2. **Ollama** (https://ollama.com) — IA local, sem chave, mas só funciona
-   rodando o app na sua própria máquina (o Streamlit Cloud não enxerga o
-   Ollama do seu computador).
+   de crédito. Funciona tanto local quanto no Streamlit Cloud.
+2. **Ollama** (https://ollama.com) — IA local, sem chave, só funciona
+   rodando o app na sua própria máquina.
 
-Se nenhuma das duas estiver configurada, cai automaticamente num roteiro
-placeholder simples (fallback local, sem IA nenhuma) que você edita na mão.
+Sem nenhuma das duas, cai num roteiro placeholder simples que você edita na mão.
 """
 
 import json
 import requests
 
 # Segundos médios de narração por item (título + frase), usado só pra
-# ESTIMAR quantos itens gerar a partir da duração desejada. A duração real
-# do vídeo final depende do tamanho do texto e só é conhecida após gerar
-# o áudio de cada item.
+# ESTIMAR quantos itens gerar a partir da duração desejada, no modo lista.
 AVG_SECONDS_PER_ITEM = 7
 
 LANGUAGE_NAMES = {
@@ -70,31 +54,12 @@ def is_ollama_available() -> bool:
         return False
 
 
-def _build_prompt(topic: str, n_items: int, language: str) -> str:
-    lang_name = LANGUAGE_NAMES.get(language, "português do Brasil")
-    return f"""Crie um roteiro para um vídeo curto (estilo TikTok educativo) sobre o tema: "{topic}".
-
-Gere exatamente {n_items} itens. Para cada item, retorne:
-- "title": nome curto do item (1 a 3 palavras), escrito em {lang_name}
-- "image_query": termo de busca em inglês para achar uma boa imagem do item (sempre em inglês)
-- "narration": 1 a 2 frases curtas e didáticas, tom curioso, para narração em voz alta, escrita em {lang_name}
-
-Responda APENAS com um JSON válido, uma lista de {n_items} objetos, sem nenhum texto antes ou depois, sem markdown, sem explicações."""
-
-
-def _parse_json_list(text: str) -> list[dict]:
+def _parse_json_obj(text: str):
     text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    data = json.loads(text)
-    # alguns modelos retornam {"items": [...]} em vez da lista direto
-    if isinstance(data, dict):
-        data = data.get("items") or next(iter(data.values()))
-    return data
+    return json.loads(text)
 
 
-def generate_script_with_groq(topic: str, n_items: int, language: str, api_key: str,
-                               model: str = GROQ_DEFAULT_MODEL) -> list[dict]:
-    """Gera o roteiro usando a API gratuita da Groq (funciona na nuvem)."""
-    prompt = _build_prompt(topic, n_items, language)
+def _call_groq(prompt: str, api_key: str, model: str = GROQ_DEFAULT_MODEL) -> str:
     resp = requests.post(
         GROQ_URL,
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -109,26 +74,56 @@ def generate_script_with_groq(topic: str, n_items: int, language: str, api_key: 
         # Mostra o motivo real do erro (chave inválida, modelo errado,
         # limite excedido etc.) em vez de só "404 Not Found".
         raise RuntimeError(f"Groq API respondeu {resp.status_code}: {resp.text[:500]}")
-    text = resp.json()["choices"][0]["message"]["content"]
-    return _parse_json_list(text)
+    return resp.json()["choices"][0]["message"]["content"]
 
 
-def generate_script_with_ollama(topic: str, n_items: int, language: str = "pt",
-                                 model: str = "llama3.1") -> list[dict]:
-    """Gera o roteiro usando um modelo local rodando no Ollama (gratuito)."""
-    prompt = _build_prompt(topic, n_items, language)
+def _call_ollama(prompt: str, model: str = "llama3.1") -> str:
     resp = requests.post(
         OLLAMA_URL,
         json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
         timeout=120,
     )
     resp.raise_for_status()
-    text = resp.json()["response"]
+    return resp.json()["response"]
+
+
+# ---------------------------------------------------------------------------
+# MODO LISTA (vários cards)
+# ---------------------------------------------------------------------------
+
+def _build_list_prompt(topic: str, n_items: int, language: str) -> str:
+    lang_name = LANGUAGE_NAMES.get(language, "português do Brasil")
+    return f"""Crie um roteiro para um vídeo curto (estilo TikTok educativo) sobre o tema: "{topic}".
+
+Gere exatamente {n_items} itens. Para cada item, retorne:
+- "title": nome curto do item (1 a 3 palavras), escrito em {lang_name}
+- "image_query": termo de busca em inglês para achar uma boa imagem do item (sempre em inglês)
+- "narration": 1 a 2 frases curtas e didáticas, tom curioso, para narração em voz alta, escrita em {lang_name}
+
+Responda APENAS com um JSON válido, uma lista de {n_items} objetos, sem nenhum texto antes ou depois, sem markdown, sem explicações."""
+
+
+def _parse_json_list(text: str) -> list[dict]:
+    data = _parse_json_obj(text)
+    if isinstance(data, dict):
+        data = data.get("items") or next(iter(data.values()))
+    return data
+
+
+def generate_script_with_groq(topic: str, n_items: int, language: str, api_key: str,
+                               model: str = GROQ_DEFAULT_MODEL) -> list[dict]:
+    text = _call_groq(_build_list_prompt(topic, n_items, language), api_key, model)
+    return _parse_json_list(text)
+
+
+def generate_script_with_ollama(topic: str, n_items: int, language: str = "pt",
+                                 model: str = "llama3.1") -> list[dict]:
+    text = _call_ollama(_build_list_prompt(topic, n_items, language), model)
     return _parse_json_list(text)
 
 
 def generate_script_fallback(topic: str, n_items: int, language: str = "pt") -> list[dict]:
-    """Roteiro placeholder para quando o Ollama não está disponível.
+    """Roteiro placeholder para quando nenhuma IA está disponível.
     Edite os textos manualmente na interface do Streamlit depois."""
     templates = {
         "pt": "Este é o item {i} sobre {topic}. Edite este texto antes de gerar o áudio.",
@@ -161,3 +156,97 @@ def generate_script(topic: str, n_items: int, language: str = "pt",
         except Exception as e:
             print(f"[content] Falha ao usar Ollama ({e}), usando fallback sem IA.")
     return generate_script_fallback(topic, n_items, language)
+
+
+# ---------------------------------------------------------------------------
+# MODO COMPARAÇÃO (estilo "coruja apontando", 2 itens)
+# ---------------------------------------------------------------------------
+
+COMPARISON_FIELDS = [
+    "item1_title", "item1_image_query",
+    "item2_title", "item2_image_query",
+    "intro1_text", "intro2_text",
+    "explain1_text", "explain2_text",
+]
+
+
+def _build_comparison_prompt(item1: str, item2: str, language: str) -> str:
+    lang_name = LANGUAGE_NAMES.get(language, "português do Brasil")
+    return f"""Crie o roteiro de um vídeo curto (estilo TikTok educativo, formato "coruja professora" \
+comparando dois conceitos) comparando "{item1}" com "{item2}".
+
+Retorne um JSON com exatamente estes campos, todos escritos em {lang_name} \
+(exceto os dois campos *_image_query, que devem ser em inglês):
+- "item1_title": nome curto de exibição de "{item1}" (1 a 2 palavras)
+- "item1_image_query": termo de busca em inglês pra achar uma boa imagem de "{item1}"
+- "item2_title": nome curto de exibição de "{item2}" (1 a 2 palavras)
+- "item2_image_query": termo de busca em inglês pra achar uma boa imagem de "{item2}"
+- "intro1_text": frase curta apresentando o item 1 (ex: "Este é o(a) {item1}.")
+- "intro2_text": frase curta apresentando o item 2 e perguntando a diferença \
+(ex: "Este é o(a) {item2}. Qual a diferença?")
+- "explain1_text": 1 a 2 frases curtas e didáticas explicando o que é "{item1}"
+- "explain2_text": 1 a 2 frases curtas e didáticas explicando o que é "{item2}"
+
+Responda APENAS com o JSON, sem texto antes ou depois, sem markdown, sem explicações."""
+
+
+def _comparison_fallback(item1: str, item2: str, language: str = "pt") -> dict:
+    t = {
+        "pt": {
+            "intro1": "Este é o(a) {x}.",
+            "intro2": "Este é o(a) {x}. Qual a diferença?",
+            "explain": "Edite este texto explicando o que é {x} antes de gerar o áudio.",
+        },
+        "en": {
+            "intro1": "This is the {x}.",
+            "intro2": "This is the {x}. What's the difference?",
+            "explain": "Edit this text explaining what {x} is before generating the audio.",
+        },
+        "es": {
+            "intro1": "Este es el/la {x}.",
+            "intro2": "Este es el/la {x}. ¿Cuál es la diferencia?",
+            "explain": "Edita este texto explicando qué es {x} antes de generar el audio.",
+        },
+        "de": {
+            "intro1": "Das ist {x}.",
+            "intro2": "Das ist {x}. Was ist der Unterschied?",
+            "explain": "Bearbeite diesen Text, um {x} zu erklären, bevor du das Audio erzeugst.",
+        },
+    }.get(language, None) or {
+        "intro1": "Este é o(a) {x}.",
+        "intro2": "Este é o(a) {x}. Qual a diferença?",
+        "explain": "Edite este texto explicando o que é {x} antes de gerar o áudio.",
+    }
+    return {
+        "item1_title": item1,
+        "item1_image_query": item1,
+        "item2_title": item2,
+        "item2_image_query": item2,
+        "intro1_text": t["intro1"].format(x=item1),
+        "intro2_text": t["intro2"].format(x=item2),
+        "explain1_text": t["explain"].format(x=item1),
+        "explain2_text": t["explain"].format(x=item2),
+    }
+
+
+def generate_comparison_script(item1: str, item2: str, language: str = "pt",
+                                groq_api_key: str | None = None,
+                                use_ollama: bool = False, ollama_model: str = "llama3.1") -> dict:
+    prompt = _build_comparison_prompt(item1, item2, language)
+    if groq_api_key:
+        try:
+            data = _parse_json_obj(_call_groq(prompt, groq_api_key))
+            if all(k in data for k in COMPARISON_FIELDS):
+                return data
+            print("[content] Groq retornou JSON incompleto, tentando próxima opção.")
+        except Exception as e:
+            print(f"[content] Falha ao usar Groq ({e}), tentando próxima opção.")
+    if use_ollama:
+        try:
+            data = _parse_json_obj(_call_ollama(prompt, ollama_model))
+            if all(k in data for k in COMPARISON_FIELDS):
+                return data
+            print("[content] Ollama retornou JSON incompleto, usando fallback sem IA.")
+        except Exception as e:
+            print(f"[content] Falha ao usar Ollama ({e}), usando fallback sem IA.")
+    return _comparison_fallback(item1, item2, language)
