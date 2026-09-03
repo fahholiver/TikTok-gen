@@ -57,30 +57,6 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 # funcionar, veja a lista atual em https://console.groq.com/docs/models
 GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 
-# Instrução compartilhada sobre como escrever os termos de busca de imagem.
-# As buscas de imagem (DuckDuckGo) não entendem contexto — um termo curto
-# ou ambíguo (ex: só "zombie" ou "mummy") facilmente retorna uma imagem sem
-# nenhuma relação com o item (uma bandeira, uma foto de pessoa aleatória
-# etc.). Por isso pedimos um termo BEM descritivo e visual, sempre em
-# inglês, mesmo quando o resto do roteiro está em outro idioma.
-IMAGE_QUERY_INSTRUCTIONS = """\
-Regras para os campos de busca de imagem (sempre em INGLÊS, mesmo que o \
-resto do roteiro esteja em outro idioma):
-- Use de 6 a 10 palavras, bem descritivas e concretas, descrevendo \
-EXATAMENTE a cena/objeto/criatura que a imagem deve mostrar, de um jeito \
-que corresponda ao item da narração.
-- Inclua características visuais específicas (aparência, roupas, cores, \
-cenário, época) em vez de só o nome do item. Por exemplo, em vez de \
-"mummy", use "ancient egyptian mummy wrapped in bandages photo"; em vez \
-de "zombie", use "scary zombie walking decayed skin horror movie".
-- Termine com uma palavra que ajude a achar uma foto/ilustração real \
-(ex: "photo", "photograph", "illustration", "movie still", "costume"), \
-nunca deixe o termo vago demais.
-- NUNCA use só uma palavra solta, o nome de um país, uma bandeira, uma \
-celebridade ou um termo abstrato — isso costuma trazer imagens sem \
-nenhuma relação com o item.\
-"""
-
 
 def estimate_item_count(duration_seconds: int) -> int:
     return max(2, round(duration_seconds / AVG_SECONDS_PER_ITEM))
@@ -141,10 +117,11 @@ def _build_list_prompt(topic: str, n_items: int, language: str) -> str:
 
 Gere exatamente {n_items} itens. Para cada item, retorne:
 - "title": nome curto do item (1 a 3 palavras), escrito em {lang_name}
-- "image_query": termo de busca em inglês para achar uma boa imagem do item
+- "image_query": TERMO DE BUSCA MUITO DETALHADO em inglês (5-8 palavras) que ajude a encontrar 
+  uma imagem CLARA E REPRESENTATIVA desse item específico. Inclua: tipo de imagem (photo, movie still, 
+  illustration, portrait), contexto visual importante, cores ou características que ajudem a diferenciar 
+  de outros itens. Ex: "classic horror movie mummy wrapped in bandages film still" em vez de só "mummy".
 - "narration": 1 a 2 frases curtas e didáticas, tom curioso, para narração em voz alta, escrita em {lang_name}
-
-{IMAGE_QUERY_INSTRUCTIONS}
 
 Responda APENAS com um JSON válido, uma lista de {n_items} objetos, sem nenhum texto antes ou depois, sem markdown, sem explicações."""
 
@@ -244,16 +221,18 @@ item em pares diferentes sempre que possível).
 Para cada par, retorne um objeto JSON com exatamente estes campos, todos escritos em {lang_name} \
 (exceto os dois campos que terminam em *_image_query, que devem ser em inglês):
 - "item1_title": nome curto de exibição do primeiro item do par (1 a 2 palavras)
-- "item1_image_query": termo de busca em inglês pra achar uma imagem que corresponda ao item 1
+- "item1_image_query": TERMO DE BUSCA MUITO DETALHADO em inglês (5-8 palavras) que ajude a \
+encontrar uma imagem CLARA do item 1. Inclua: tipo (photo, movie, illustration), contexto, \
+características visuais. Ex: "classic vampire dracula movie still portrait" em vez de só "vampire".
 - "item2_title": nome curto de exibição do segundo item do par (1 a 2 palavras)
-- "item2_image_query": termo de busca em inglês pra achar uma imagem que corresponda ao item 2
+- "item2_image_query": TERMO DE BUSCA MUITO DETALHADO em inglês (5-8 palavras) que ajude a \
+encontrar uma imagem CLARA do item 2, visualmente DISTINTO do item 1. Ex: se item1 é vampiro, \
+item2_image_query pode ser "werewolf transformation horror film still" para evitar confusão.
 - "intro1_text": frase curta apresentando o item 1 (ex: "Este é o(a) X.")
 - "intro2_text": frase curta apresentando o item 2 e perguntando a diferença \
 (ex: "Este é o(a) Y. Qual a diferença?")
 - "explain1_text": 1 a 2 frases curtas e didáticas explicando o que é o item 1
 - "explain2_text": 1 a 2 frases curtas e didáticas explicando o que é o item 2
-
-{IMAGE_QUERY_INSTRUCTIONS}
 {length_hint}
 Responda APENAS com um JSON válido no formato {{"comparisons": [ ... ]}}, contendo uma lista \
 com exatamente {n_pairs} objetos como descrito acima, sem nenhum texto antes ou depois, sem \
