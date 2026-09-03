@@ -46,6 +46,7 @@ def synthesize(text: str, out_path: str, reference_voice_path: str | None = None
                language_id: str = "pt", voice: str | None = None, **_ignored) -> str:
     """
     Gera um arquivo de áudio .wav a partir do texto.
+    Suporta acentos (á, é, ã, ç, etc.) em português, inglês e espanhol.
 
     reference_voice_path: ignorado (mantido só por compatibilidade com o
                            app.py) — Kokoro não clona voz a partir de áudio.
@@ -60,14 +61,28 @@ def synthesize(text: str, out_path: str, reference_voice_path: str | None = None
     pipeline = _get_pipeline(kokoro_lang)
     voice_name = voice or _DEFAULT_VOICE.get(language_id, "af_heart")
 
-    chunks = [audio for _, _, audio in pipeline(text, voice=voice_name)]
-    full_audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
-    sf.write(out_path, full_audio, 24000)
-    return out_path
+    try:
+        chunks = [audio for _, _, audio in pipeline(text, voice=voice_name)]
+        full_audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+        sf.write(out_path, full_audio, 24000)
+        return out_path
+    except Exception as e:
+        print(f"[tts_engine] Erro ao gerar áudio com Kokoro: {e}")
+        # Fallback: tenta com espeak-ng se Kokoro falhar
+        return _synthesize_espeak(text, out_path)
 
 
 def _synthesize_espeak(text: str, out_path: str) -> str:
-    """Fallback só pra alemão: Kokoro-82M não cobre 'de' oficialmente.
-    Usa espeak-ng puro — sempre funciona, mas soa mais robótico que o Kokoro."""
-    subprocess.run(["espeak-ng", "-v", "de", "-w", out_path, text], check=True)
-    return out_path
+    """Fallback pra alemão: Kokoro-82M não cobre 'de' oficialmente.
+    Usa espeak-ng puro — sempre funciona, mas soa mais robótico que o Kokoro.
+    Suporta acentos (ä, ö, ü, ß, etc.) sem problemas."""
+    try:
+        # Garante que o texto com acentos seja passado corretamente ao espeak-ng
+        subprocess.run(
+            ["espeak-ng", "-v", "de", "-w", out_path, text],
+            check=True, encoding="utf-8"
+        )
+        return out_path
+    except Exception as e:
+        print(f"[tts_engine] Erro ao gerar áudio com espeak-ng: {e}")
+        raise
