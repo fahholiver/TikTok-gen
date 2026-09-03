@@ -23,11 +23,15 @@ Formato de saída (lista de dicts), um item por "card" do vídeo:
         "narration": "This is a mummy. It's a corpse wrapped in cloth..."
     }
 
-Geração 100% gratuita, usando IA local via Ollama (https://ollama.com):
-- Sem chave de API, sem custo, sem enviar nada pra fora do seu computador.
-- Só precisa instalar o Ollama e baixar um modelo (ex: `ollama pull llama3.1`).
+Geração 100% gratuita, com duas opções de IA:
+1. **Groq** (https://console.groq.com) — API na nuvem, gratuita, sem cartão
+   de crédito. Funciona tanto local quanto no Streamlit Cloud (é a opção
+   recomendada pra quem hospedou o app na nuvem).
+2. **Ollama** (https://ollama.com) — IA local, sem chave, mas só funciona
+   rodando o app na sua própria máquina (o Streamlit Cloud não enxerga o
+   Ollama do seu computador).
 
-Se o Ollama não estiver rodando, cai automaticamente num roteiro
+Se nenhuma das duas estiver configurada, cai automaticamente num roteiro
 placeholder simples (fallback local, sem IA nenhuma) que você edita na mão.
 """
 
@@ -48,6 +52,8 @@ LANGUAGE_NAMES = {
 }
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 
 def estimate_item_count(duration_seconds: int) -> int:
@@ -62,12 +68,9 @@ def is_ollama_available() -> bool:
         return False
 
 
-def generate_script_with_ollama(topic: str, n_items: int, language: str = "pt",
-                                 model: str = "llama3.1") -> list[dict]:
-    """Gera o roteiro usando um modelo local rodando no Ollama (gratuito)."""
+def _build_prompt(topic: str, n_items: int, language: str) -> str:
     lang_name = LANGUAGE_NAMES.get(language, "português do Brasil")
-
-    prompt = f"""Crie um roteiro para um vídeo curto (estilo TikTok educativo) sobre o tema: "{topic}".
+    return f"""Crie um roteiro para um vídeo curto (estilo TikTok educativo) sobre o tema: "{topic}".
 
 Gere exatamente {n_items} itens. Para cada item, retorne:
 - "title": nome curto do item (1 a 3 palavras), escrito em {lang_name}
@@ -76,20 +79,47 @@ Gere exatamente {n_items} itens. Para cada item, retorne:
 
 Responda APENAS com um JSON válido, uma lista de {n_items} objetos, sem nenhum texto antes ou depois, sem markdown, sem explicações."""
 
+
+def _parse_json_list(text: str) -> list[dict]:
+    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    data = json.loads(text)
+    # alguns modelos retornam {"items": [...]} em vez da lista direto
+    if isinstance(data, dict):
+        data = data.get("items") or next(iter(data.values()))
+    return data
+
+
+def generate_script_with_groq(topic: str, n_items: int, language: str, api_key: str,
+                               model: str = GROQ_DEFAULT_MODEL) -> list[dict]:
+    """Gera o roteiro usando a API gratuita da Groq (funciona na nuvem)."""
+    prompt = _build_prompt(topic, n_items, language)
+    resp = requests.post(
+        GROQ_URL,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    text = resp.json()["choices"][0]["message"]["content"]
+    return _parse_json_list(text)
+
+
+def generate_script_with_ollama(topic: str, n_items: int, language: str = "pt",
+                                 model: str = "llama3.1") -> list[dict]:
+    """Gera o roteiro usando um modelo local rodando no Ollama (gratuito)."""
+    prompt = _build_prompt(topic, n_items, language)
     resp = requests.post(
         OLLAMA_URL,
         json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
         timeout=120,
     )
     resp.raise_for_status()
-    text = resp.json()["response"].strip()
-    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-
-    data = json.loads(text)
-    # alguns modelos retornam {"items": [...]} em vez da lista direto
-    if isinstance(data, dict):
-        data = data.get("items") or next(iter(data.values()))
-    return data
+    text = resp.json()["response"]
+    return _parse_json_list(text)
 
 
 def generate_script_fallback(topic: str, n_items: int, language: str = "pt") -> list[dict]:
@@ -113,7 +143,13 @@ def generate_script_fallback(topic: str, n_items: int, language: str = "pt") -> 
 
 
 def generate_script(topic: str, n_items: int, language: str = "pt",
-                     use_ollama: bool = True, ollama_model: str = "llama3.1") -> list[dict]:
+                     groq_api_key: str | None = None,
+                     use_ollama: bool = False, ollama_model: str = "llama3.1") -> list[dict]:
+    if groq_api_key:
+        try:
+            return generate_script_with_groq(topic, n_items, language, groq_api_key)
+        except Exception as e:
+            print(f"[content] Falha ao usar Groq ({e}), tentando próxima opção.")
     if use_ollama:
         try:
             return generate_script_with_ollama(topic, n_items, language, ollama_model)
