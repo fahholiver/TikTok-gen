@@ -3,12 +3,13 @@ Monta o vídeo final (formato 9:16, estilo TikTok) em dois modos:
 
 1) build_video()            -> MODO LISTA, vários "cards" em sequência.
 2) build_comparison_video() -> MODO COMPARAÇÃO, estilo "coruja apontando":
-   mostra item1 -> mostra item2 + pergunta -> coruja aponta e explica item1
-   -> coruja vira e explica item2.
+   mostra item1 -> mostra item2 + pergunta (coruja "pensativa") -> coruja
+   aponta e explica item1 -> coruja vira e explica item2.
 
 pip install moviepy pillow numpy
 """
 
+import os
 import numpy as np
 from PIL import Image
 from moviepy import (
@@ -21,11 +22,31 @@ W, H = 720, 1280  # formato vertical, resolução reduzida pra caber no plano
                    # RAM/tempo durante a renderização). Se rodar local com
                    # mais RAM, pode voltar pra 1080x1920 sem problema.
 
+# Fonte com suporte a acentos (á, é, ã, ç...). Sem isso o Pillow usa uma
+# fonte padrão sem esses caracteres e eles aparecem como quadrados (▢).
+# O pacote `fonts-dejavu-core` (já no packages.txt) instala nesse caminho
+# tanto localmente (Linux) quanto no Streamlit Cloud.
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+]
+
+
+def _resolve_font(font: str | None) -> str | None:
+    if font:
+        return font
+    for path in _FONT_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return None  # último recurso: Pillow usa a fonte padrão (sem acentos)
+
 
 def build_card_clip(image_path: str, title: str, narration_text: str,
                      audio_path: str, font: str = None) -> CompositeVideoClip:
     """Cria um clipe (1 'card') com fundo branco, título, imagem e legenda,
     com duração igual à do áudio de narração."""
+    font = _resolve_font(font)
     audio = AudioFileClip(audio_path)
     duration = audio.duration + 0.4  # pequena folga no fim
 
@@ -41,9 +62,9 @@ def build_card_clip(image_path: str, title: str, narration_text: str,
                   .with_position(("center", int(H * 0.12)))
                   .with_duration(duration))
 
-    caption_clip = (TextClip(text=narration_text, font_size=55, color="black", font=font,
-                              method="caption", size=(int(W * 0.85), None))
-                    .with_position(("center", int(H * 0.62)))
+    caption_clip = (TextClip(text=narration_text, font_size=48, color="black", font=font,
+                              method="caption", size=(int(W * 0.85), int(H * 0.28)))
+                    .with_position(("center", int(H * 0.60)))
                     .with_duration(duration))
 
     card = CompositeVideoClip([bg, img, title_clip, caption_clip], size=(W, H))
@@ -79,12 +100,20 @@ def build_video(items: list[dict], out_path: str, font: str = None) -> str:
 
 _IMG_W, _IMG_H = int(W * 0.40), int(H * 0.20)
 _LEFT_X, _RIGHT_X = int(W * 0.06), W - _IMG_W - int(W * 0.06)
-_IMG_Y = int(H * 0.22)
-_TITLE_Y = int(H * 0.08)
+_IMG_Y = int(H * 0.20)
+_TITLE_Y = int(H * 0.06)
 
-_SINGLE_W, _SINGLE_H = int(W * 0.78), int(H * 0.30)
+_SINGLE_W, _SINGLE_H = int(W * 0.78), int(H * 0.28)
 _SINGLE_X = (W - _SINGLE_W) // 2
-_SINGLE_Y = int(H * 0.18)
+_SINGLE_Y = int(H * 0.16)
+
+# Caixa de legenda com altura FIXA e generosa (2-4 linhas cabem sem
+# sobrepor a coruja, que fica logo abaixo dela).
+_CAPTION_Y = int(H * 0.42)
+_CAPTION_W = int(W * 0.88)
+_CAPTION_H = int(H * 0.20)
+
+_OWL_Y = int(H * 0.64)
 
 
 def _bg(duration):
@@ -92,7 +121,7 @@ def _bg(duration):
 
 
 def _title_clip(text, x, w, y, duration, font=None):
-    return (TextClip(text=text, font_size=44, color="black", font=font,
+    return (TextClip(text=text, font_size=44, color="black", font=_resolve_font(font),
                       method="caption", size=(w, None))
             .with_position((x, y))
             .with_duration(duration))
@@ -113,7 +142,7 @@ def _highlight_clip(x, y, w, h, duration, pad=14, color=(255, 205, 0)):
             .with_duration(duration))
 
 
-def _owl_clip(owl_image_path, duration, flip=False, width_frac=0.55):
+def _owl_clip(owl_image_path, duration, flip=False, width_frac=0.5):
     """A coruja fica sempre na mesma posição (parte de baixo do quadro);
     espelhamos horizontalmente pra dar a impressão de que ela 'virou' pra
     apontar pro outro lado."""
@@ -123,18 +152,19 @@ def _owl_clip(owl_image_path, duration, flip=False, width_frac=0.55):
     arr = np.array(img)
     return (ImageClip(arr)
             .resized(width=int(W * width_frac))
-            .with_position(("center", int(H * 0.60)))
+            .with_position(("center", _OWL_Y))
             .with_duration(duration))
 
 
 def _caption_clip(text, duration, font=None):
-    return (TextClip(text=text, font_size=42, color="black", font=font,
-                      method="caption", size=(int(W * 0.85), None))
-            .with_position(("center", int(H * 0.50)))
+    return (TextClip(text=text, font_size=38, color="black", font=_resolve_font(font),
+                      method="caption", size=(_CAPTION_W, _CAPTION_H))
+            .with_position(("center", _CAPTION_Y))
             .with_duration(duration))
 
 
 def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
+                            owl_thinking_path: str | None = None,
                             font: str = None) -> str:
     """
     data precisa conter:
@@ -143,7 +173,12 @@ def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
         intro2_text,  intro2_audio,
         explain1_text, explain1_audio,
         explain2_text, explain2_audio,
+
+    owl_thinking_path: imagem opcional da coruja em pose "pensativa", usada
+    só na cena 2 (quando ela pergunta "qual a diferença?"). Se não for
+    passada, reusa a imagem normal (owl_image_path).
     """
+    thinking_path = owl_thinking_path or owl_image_path
     scenes = []
 
     # Cena 1: só o item 1 aparece, coruja apresenta
@@ -151,13 +186,13 @@ def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
     d1 = a1.duration + 0.4
     scenes.append(CompositeVideoClip([
         _bg(d1),
-        _title_clip(data["item1_title"], _SINGLE_X, _SINGLE_W, int(H * 0.06), d1, font),
+        _title_clip(data["item1_title"], _SINGLE_X, _SINGLE_W, int(H * 0.04), d1, font),
         _image_clip(data["item1_image_path"], _SINGLE_X, _SINGLE_Y, _SINGLE_W, _SINGLE_H, d1),
         _caption_clip(data["intro1_text"], d1, font),
         _owl_clip(owl_image_path, d1, flip=False),
     ], size=(W, H)).with_audio(a1))
 
-    # Cena 2: item 2 aparece do outro lado, coruja pergunta a diferença
+    # Cena 2: item 2 aparece do outro lado, coruja PENSATIVA pergunta a diferença
     a2 = AudioFileClip(data["intro2_audio"])
     d2 = a2.duration + 0.4
     scenes.append(CompositeVideoClip([
@@ -167,7 +202,7 @@ def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
         _image_clip(data["item1_image_path"], _LEFT_X, _IMG_Y, _IMG_W, _IMG_H, d2),
         _image_clip(data["item2_image_path"], _RIGHT_X, _IMG_Y, _IMG_W, _IMG_H, d2),
         _caption_clip(data["intro2_text"], d2, font),
-        _owl_clip(owl_image_path, d2, flip=True),
+        _owl_clip(thinking_path, d2, flip=False),
     ], size=(W, H)).with_audio(a2))
 
     # Cena 3: coruja aponta pro item 1 (destaque à esquerda) e explica
