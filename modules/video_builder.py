@@ -1,13 +1,16 @@
 """
-Monta o vídeo final (formato 9:16, estilo TikTok) juntando:
-- imagem de cada item
-- título em texto
-- narração em áudio (realista, gerada pelo tts_engine)
+Monta o vídeo final (formato 9:16, estilo TikTok) em dois modos:
 
-pip install moviepy
+1) build_video()            -> MODO LISTA, vários "cards" em sequência.
+2) build_comparison_video() -> MODO COMPARAÇÃO, estilo "coruja apontando":
+   mostra item1 -> mostra item2 + pergunta -> coruja aponta e explica item1
+   -> coruja vira e explica item2.
+
+pip install moviepy pillow numpy
 """
 
-import os
+import numpy as np
+from PIL import Image
 from moviepy import (
     ImageClip, TextClip, CompositeVideoClip, AudioFileClip,
     concatenate_videoclips, ColorClip,
@@ -65,6 +68,137 @@ def build_video(items: list[dict], out_path: str, font: str = None) -> str:
     ]
 
     final = concatenate_videoclips(clips, method="compose")
+    final.write_videofile(out_path, fps=24, codec="libx264", audio_codec="aac",
+                           preset="ultrafast", threads=2)
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# MODO COMPARAÇÃO (estilo "coruja apontando", 2 itens)
+# ---------------------------------------------------------------------------
+
+_IMG_W, _IMG_H = int(W * 0.40), int(H * 0.20)
+_LEFT_X, _RIGHT_X = int(W * 0.06), W - _IMG_W - int(W * 0.06)
+_IMG_Y = int(H * 0.22)
+_TITLE_Y = int(H * 0.08)
+
+_SINGLE_W, _SINGLE_H = int(W * 0.78), int(H * 0.30)
+_SINGLE_X = (W - _SINGLE_W) // 2
+_SINGLE_Y = int(H * 0.18)
+
+
+def _bg(duration):
+    return ColorClip(size=(W, H), color=(255, 255, 255)).with_duration(duration)
+
+
+def _title_clip(text, x, w, y, duration, font=None):
+    return (TextClip(text=text, font_size=44, color="black", font=font,
+                      method="caption", size=(w, None))
+            .with_position((x, y))
+            .with_duration(duration))
+
+
+def _image_clip(path, x, y, w, h, duration):
+    return (ImageClip(path)
+            .resized(new_size=(w, h))
+            .with_position((x, y))
+            .with_duration(duration))
+
+
+def _highlight_clip(x, y, w, h, duration, pad=14, color=(255, 205, 0)):
+    """Retângulo colorido atrás da imagem ativa, pra indicar o que a coruja
+    está explicando no momento."""
+    return (ColorClip(size=(w + pad * 2, h + pad * 2), color=color)
+            .with_position((x - pad, y - pad))
+            .with_duration(duration))
+
+
+def _owl_clip(owl_image_path, duration, flip=False, width_frac=0.55):
+    """A coruja fica sempre na mesma posição (parte de baixo do quadro);
+    espelhamos horizontalmente pra dar a impressão de que ela 'virou' pra
+    apontar pro outro lado."""
+    img = Image.open(owl_image_path).convert("RGB")
+    if flip:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    arr = np.array(img)
+    return (ImageClip(arr)
+            .resized(width=int(W * width_frac))
+            .with_position(("center", int(H * 0.60)))
+            .with_duration(duration))
+
+
+def _caption_clip(text, duration, font=None):
+    return (TextClip(text=text, font_size=42, color="black", font=font,
+                      method="caption", size=(int(W * 0.85), None))
+            .with_position(("center", int(H * 0.50)))
+            .with_duration(duration))
+
+
+def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
+                            font: str = None) -> str:
+    """
+    data precisa conter:
+        item1_title, item1_image_path, item2_title, item2_image_path,
+        intro1_text,  intro1_audio,
+        intro2_text,  intro2_audio,
+        explain1_text, explain1_audio,
+        explain2_text, explain2_audio,
+    """
+    scenes = []
+
+    # Cena 1: só o item 1 aparece, coruja apresenta
+    a1 = AudioFileClip(data["intro1_audio"])
+    d1 = a1.duration + 0.4
+    scenes.append(CompositeVideoClip([
+        _bg(d1),
+        _title_clip(data["item1_title"], _SINGLE_X, _SINGLE_W, int(H * 0.06), d1, font),
+        _image_clip(data["item1_image_path"], _SINGLE_X, _SINGLE_Y, _SINGLE_W, _SINGLE_H, d1),
+        _caption_clip(data["intro1_text"], d1, font),
+        _owl_clip(owl_image_path, d1, flip=False),
+    ], size=(W, H)).with_audio(a1))
+
+    # Cena 2: item 2 aparece do outro lado, coruja pergunta a diferença
+    a2 = AudioFileClip(data["intro2_audio"])
+    d2 = a2.duration + 0.4
+    scenes.append(CompositeVideoClip([
+        _bg(d2),
+        _title_clip(data["item1_title"], _LEFT_X, _IMG_W, _TITLE_Y, d2, font),
+        _title_clip(data["item2_title"], _RIGHT_X, _IMG_W, _TITLE_Y, d2, font),
+        _image_clip(data["item1_image_path"], _LEFT_X, _IMG_Y, _IMG_W, _IMG_H, d2),
+        _image_clip(data["item2_image_path"], _RIGHT_X, _IMG_Y, _IMG_W, _IMG_H, d2),
+        _caption_clip(data["intro2_text"], d2, font),
+        _owl_clip(owl_image_path, d2, flip=True),
+    ], size=(W, H)).with_audio(a2))
+
+    # Cena 3: coruja aponta pro item 1 (destaque à esquerda) e explica
+    a3 = AudioFileClip(data["explain1_audio"])
+    d3 = a3.duration + 0.4
+    scenes.append(CompositeVideoClip([
+        _bg(d3),
+        _highlight_clip(_LEFT_X, _IMG_Y, _IMG_W, _IMG_H, d3),
+        _title_clip(data["item1_title"], _LEFT_X, _IMG_W, _TITLE_Y, d3, font),
+        _title_clip(data["item2_title"], _RIGHT_X, _IMG_W, _TITLE_Y, d3, font),
+        _image_clip(data["item1_image_path"], _LEFT_X, _IMG_Y, _IMG_W, _IMG_H, d3),
+        _image_clip(data["item2_image_path"], _RIGHT_X, _IMG_Y, _IMG_W, _IMG_H, d3),
+        _caption_clip(data["explain1_text"], d3, font),
+        _owl_clip(owl_image_path, d3, flip=False),
+    ], size=(W, H)).with_audio(a3))
+
+    # Cena 4: coruja vira e explica o item 2 (destaque à direita)
+    a4 = AudioFileClip(data["explain2_audio"])
+    d4 = a4.duration + 0.4
+    scenes.append(CompositeVideoClip([
+        _bg(d4),
+        _highlight_clip(_RIGHT_X, _IMG_Y, _IMG_W, _IMG_H, d4),
+        _title_clip(data["item1_title"], _LEFT_X, _IMG_W, _TITLE_Y, d4, font),
+        _title_clip(data["item2_title"], _RIGHT_X, _IMG_W, _TITLE_Y, d4, font),
+        _image_clip(data["item1_image_path"], _LEFT_X, _IMG_Y, _IMG_W, _IMG_H, d4),
+        _image_clip(data["item2_image_path"], _RIGHT_X, _IMG_Y, _IMG_W, _IMG_H, d4),
+        _caption_clip(data["explain2_text"], d4, font),
+        _owl_clip(owl_image_path, d4, flip=True),
+    ], size=(W, H)).with_audio(a4))
+
+    final = concatenate_videoclips(scenes, method="compose")
     final.write_videofile(out_path, fps=24, codec="libx264", audio_codec="aac",
                            preset="ultrafast", threads=2)
     return out_path
