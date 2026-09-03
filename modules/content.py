@@ -53,7 +53,9 @@ LANGUAGE_NAMES = {
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+# ATENÇÃO: a Groq desativa modelos periodicamente. Se este parar de
+# funcionar, veja a lista atual em https://console.groq.com/docs/models
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
 def estimate_item_count(duration_seconds: int) -> int:
