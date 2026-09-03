@@ -13,7 +13,10 @@ from moviepy import (
     concatenate_videoclips, ColorClip,
 )
 
-W, H = 1080, 1920  # formato vertical TikTok
+W, H = 720, 1280  # formato vertical, resolução reduzida pra caber no plano
+                   # grátis do Streamlit Cloud (1080x1920 costuma estourar
+                   # RAM/tempo durante a renderização). Se rodar local com
+                   # mais RAM, pode voltar pra 1080x1920 sem problema.
 
 
 def build_card_clip(image_path: str, title: str, narration_text: str,
@@ -62,5 +65,6 @@ def build_video(items: list[dict], out_path: str, font: str = None) -> str:
     ]
 
     final = concatenate_videoclips(clips, method="compose")
-    final.write_videofile(out_path, fps=30, codec="libx264", audio_codec="aac")
+    final.write_videofile(out_path, fps=24, codec="libx264", audio_codec="aac",
+                           preset="ultrafast", threads=2)
     return out_path
