@@ -30,18 +30,37 @@ language_label = st.selectbox("Idioma falado da narração", list(LANGUAGES.keys
 language = LANGUAGES[language_label]
 
 st.subheader("IA para escrever o roteiro (gratuita)")
+
+groq_api_key_input = st.text_input(
+    "Chave da API Groq (gratuita, recomendada — funciona também na nuvem)",
+    type="password",
+    help="Crie de graça em https://console.groq.com/keys (sem cartão de crédito). "
+         "Se você já está no Streamlit Cloud, salve a chave em Settings → Secrets "
+         "como GROQ_API_KEY em vez de colar aqui toda vez.",
+)
+try:
+    groq_api_key = groq_api_key_input or st.secrets.get("GROQ_API_KEY", "")
+except Exception:
+    groq_api_key = groq_api_key_input
+
 ollama_ok = is_ollama_available()
-if ollama_ok:
+
+if groq_api_key:
+    st.success("✅ Groq configurado — roteiro será gerado por IA, de graça, funciona na nuvem também.")
+elif ollama_ok:
     st.success("✅ Ollama detectado rodando localmente — roteiro será gerado por IA, de graça.")
 else:
     st.warning(
-        "⚠️ Ollama não encontrado em localhost:11434. Instale grátis em "
-        "[ollama.com](https://ollama.com) e rode `ollama pull llama3.1` para "
-        "ativar a geração automática por IA. Por enquanto, o roteiro sairá "
-        "como um placeholder simples pra você editar na mão."
+        "⚠️ Nenhuma IA configurada. Opções gratuitas:\n"
+        "- **Groq** (recomendado, funciona na nuvem): crie uma chave grátis em "
+        "[console.groq.com/keys](https://console.groq.com/keys) e cole acima.\n"
+        "- **Ollama** (só funciona rodando localmente): instale em "
+        "[ollama.com](https://ollama.com) e rode `ollama pull llama3.1`.\n\n"
+        "Sem nenhuma das duas, o roteiro sai como um placeholder simples pra você editar na mão."
     )
+
 ollama_model = st.text_input(
-    "Modelo do Ollama a usar", "llama3.1",
+    "Modelo do Ollama a usar (só é usado se você não colocou chave da Groq)", "llama3.1",
     help="Qualquer modelo que você já tenha baixado com `ollama pull <modelo>`. "
          "Ex: llama3.1, mistral, qwen2.5, gemma2.",
 )
@@ -75,6 +94,7 @@ if st.button("📝 Gerar roteiro"):
     with st.spinner("Gerando roteiro..."):
         st.session_state.script = generate_script(
             topic, n_items, language,
+            groq_api_key=groq_api_key or None,
             use_ollama=ollama_ok, ollama_model=ollama_model,
         )
 
