@@ -170,8 +170,21 @@ COMPARISON_FIELDS = [
 ]
 
 
-def _build_comparison_prompt(item1: str, item2: str, language: str) -> str:
+def _build_comparison_prompt(item1: str, item2: str, language: str,
+                              target_seconds: int | None = None) -> str:
     lang_name = LANGUAGE_NAMES.get(language, "português do Brasil")
+
+    length_hint = ""
+    if target_seconds:
+        per_line_seconds = max(3, round(target_seconds / 4))
+        approx_words = max(6, round(per_line_seconds * 2.3))
+        length_hint = (
+            f"\nCada uma das 4 falas (intro1_text, intro2_text, explain1_text, "
+            f"explain2_text) deve ter por volta de {approx_words} palavras "
+            f"(~{per_line_seconds}s falado), pra o vídeo inteiro durar perto "
+            f"de {target_seconds} segundos no total."
+        )
+
     return f"""Crie o roteiro de um vídeo curto (estilo TikTok educativo, formato "coruja professora" \
 comparando dois conceitos) comparando "{item1}" com "{item2}".
 
@@ -186,7 +199,7 @@ Retorne um JSON com exatamente estes campos, todos escritos em {lang_name} \
 (ex: "Este é o(a) {item2}. Qual a diferença?")
 - "explain1_text": 1 a 2 frases curtas e didáticas explicando o que é "{item1}"
 - "explain2_text": 1 a 2 frases curtas e didáticas explicando o que é "{item2}"
-
+{length_hint}
 Responda APENAS com o JSON, sem texto antes ou depois, sem markdown, sem explicações."""
 
 
@@ -230,9 +243,10 @@ def _comparison_fallback(item1: str, item2: str, language: str = "pt") -> dict:
 
 
 def generate_comparison_script(item1: str, item2: str, language: str = "pt",
+                                target_seconds: int | None = None,
                                 groq_api_key: str | None = None,
                                 use_ollama: bool = False, ollama_model: str = "llama3.1") -> dict:
-    prompt = _build_comparison_prompt(item1, item2, language)
+    prompt = _build_comparison_prompt(item1, item2, language, target_seconds)
     if groq_api_key:
         try:
             data = _parse_json_obj(_call_groq(prompt, groq_api_key))
