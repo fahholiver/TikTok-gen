@@ -105,7 +105,10 @@ def generate_script_with_groq(topic: str, n_items: int, language: str, api_key: 
         },
         timeout=60,
     )
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        # Mostra o motivo real do erro (chave inválida, modelo errado,
+        # limite excedido etc.) em vez de só "404 Not Found".
+        raise RuntimeError(f"Groq API respondeu {resp.status_code}: {resp.text[:500]}")
     text = resp.json()["choices"][0]["message"]["content"]
     return _parse_json_list(text)
 
