@@ -1,10 +1,14 @@
 """
 Monta o vídeo final (formato 9:16, estilo TikTok) em dois modos:
 
-1) build_video()            -> MODO LISTA, vários "cards" em sequência.
-2) build_comparison_video() -> MODO COMPARAÇÃO, estilo "coruja apontando":
-   mostra item1 -> mostra item2 + pergunta (coruja "pensativa") -> coruja
-   aponta e explica item1 -> coruja vira e explica item2.
+1) build_video()               -> MODO LISTA, vários "cards" em sequência.
+2) build_multi_comparison_video() -> MODO COMPARAÇÃO, estilo "coruja
+   apontando": para CADA PAR de itens, mostra item1 -> mostra item2 +
+   pergunta (coruja "pensativa") -> coruja aponta e explica item1 -> coruja
+   vira e explica item2. Os pares são concatenados um atrás do outro pra
+   formar o vídeo final (vários pares = vários "blocos" de 4 cenas).
+   build_comparison_video() é mantida como atalho pra um único par, e só
+   chama build_multi_comparison_video() com uma lista de 1 item.
 
 pip install moviepy pillow numpy
 """
@@ -95,7 +99,7 @@ def build_video(items: list[dict], out_path: str, font: str = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# MODO COMPARAÇÃO (estilo "coruja apontando", 2 itens)
+# MODO COMPARAÇÃO (estilo "coruja apontando") — um ou vários pares
 # ---------------------------------------------------------------------------
 
 _IMG_W, _IMG_H = int(W * 0.40), int(H * 0.20)
@@ -163,22 +167,11 @@ def _caption_clip(text, duration, font=None):
             .with_duration(duration))
 
 
-def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
-                            owl_thinking_path: str | None = None,
-                            font: str = None) -> str:
-    """
-    data precisa conter:
-        item1_title, item1_image_path, item2_title, item2_image_path,
-        intro1_text,  intro1_audio,
-        intro2_text,  intro2_audio,
-        explain1_text, explain1_audio,
-        explain2_text, explain2_audio,
-
-    owl_thinking_path: imagem opcional da coruja em pose "pensativa", usada
-    só na cena 2 (quando ela pergunta "qual a diferença?"). Se não for
-    passada, reusa a imagem normal (owl_image_path).
-    """
-    thinking_path = owl_thinking_path or owl_image_path
+def _build_comparison_pair_scenes(data: dict, owl_image_path: str, thinking_path: str,
+                                   font: str = None) -> list[CompositeVideoClip]:
+    """Monta as 4 cenas (intro1, intro2, explain1, explain2) de UM par de
+    comparação. Usado tanto por build_comparison_video() (1 par) quanto por
+    build_multi_comparison_video() (vários pares concatenados)."""
     scenes = []
 
     # Cena 1: só o item 1 aparece, coruja apresenta
@@ -233,7 +226,44 @@ def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
         _owl_clip(owl_image_path, d4, flip=True),
     ], size=(W, H)).with_audio(a4))
 
-    final = concatenate_videoclips(scenes, method="compose")
+    return scenes
+
+
+def build_multi_comparison_video(pairs: list[dict], owl_image_path: str, out_path: str,
+                                  owl_thinking_path: str | None = None,
+                                  font: str = None) -> str:
+    """
+    pairs: lista de dicts, um por PAR de comparação, cada um com:
+        item1_title, item1_image_path, item2_title, item2_image_path,
+        intro1_text,   intro1_audio,
+        intro2_text,   intro2_audio,
+        explain1_text, explain1_audio,
+        explain2_text, explain2_audio,
+
+    Todos os pares são renderizados em sequência (4 cenas cada) e
+    concatenados num único vídeo final, reusando as mesmas imagens da
+    coruja em todos os pares.
+
+    owl_thinking_path: imagem opcional da coruja em pose "pensativa", usada
+    só na cena 2 de cada par (quando ela pergunta "qual a diferença?"). Se
+    não for passada, reusa a imagem normal (owl_image_path).
+    """
+    thinking_path = owl_thinking_path or owl_image_path
+    all_scenes = []
+    for pair_data in pairs:
+        all_scenes.extend(_build_comparison_pair_scenes(pair_data, owl_image_path, thinking_path, font))
+
+    final = concatenate_videoclips(all_scenes, method="compose")
     final.write_videofile(out_path, fps=24, codec="libx264", audio_codec="aac",
                            preset="ultrafast", threads=2)
     return out_path
+
+
+def build_comparison_video(data: dict, owl_image_path: str, out_path: str,
+                            owl_thinking_path: str | None = None,
+                            font: str = None) -> str:
+    """Atalho pra renderizar um vídeo com um ÚNICO par de comparação.
+    Mantido por compatibilidade — internamente chama
+    build_multi_comparison_video() com uma lista de 1 item."""
+    return build_multi_comparison_video([data], owl_image_path, out_path,
+                                         owl_thinking_path=owl_thinking_path, font=font)
