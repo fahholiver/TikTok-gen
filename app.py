@@ -5,11 +5,11 @@ import pandas as pd
 
 from modules.content import (
     generate_script, estimate_item_count, is_ollama_available,
-    generate_comparison_script,
+    generate_comparison_topics, estimate_comparison_count,
 )
 from modules.images import fetch_image_for_item
 from modules.tts_engine import synthesize, LANGUAGES
-from modules.video_builder import build_video, build_comparison_video
+from modules.video_builder import build_video, build_multi_comparison_video
 
 st.set_page_config(page_title="Gerador de Vídeos Educativos", page_icon="🎬", layout="centered")
 st.title("🎬 Gerador automático de vídeos (estilo TikTok)")
@@ -168,13 +168,26 @@ if mode == "Lista de itens (vários cards)":
                 st.download_button("⬇️ Baixar vídeo", f, file_name="video_final.mp4")
 
 # ---------------------------------------------------------------------------
-# MODO 2: Comparação estilo "coruja apontando"
+# MODO 2: Comparação estilo "coruja apontando" — vários pares a partir de um tema
 # ---------------------------------------------------------------------------
 else:
-    st.header("1. O que comparar?")
-    col1, col2 = st.columns(2)
-    item1 = col1.text_input("Item 1", "Mummy")
-    item2 = col2.text_input("Item 2", "Zombie")
+    st.header("1. Tema do vídeo")
+    comparison_topic = st.text_input(
+        "Sobre o que é o vídeo?", "Monstros clássicos de filmes de terror",
+        help="A IA vai inventar vários PARES de comparação relacionados a esse "
+             "tema (ex: vampiro x lobisomem, zumbi x múmia...), não só um par fixo.",
+    )
+
+    comparison_duration_seconds = st.slider(
+        "Duração aproximada do vídeo (segundos)", 15, 120, 60, step=5,
+        key="comparison_duration",
+    )
+    n_pairs = estimate_comparison_count(comparison_duration_seconds)
+    st.caption(
+        f"Isso deve gerar em torno de **{n_pairs} pares de comparação**. "
+        "A duração final pode variar um pouco — só é conhecida com exatidão "
+        "depois de gerar o áudio."
+    )
 
     st.subheader("Apresentador (coruja)")
     col_a, col_b = st.columns(2)
@@ -207,59 +220,58 @@ else:
     else:
         owl_thinking_path = None  # cai no fallback (reusa a padrão)
 
-    duration_seconds = st.slider("Duração aproximada do vídeo (segundos)", 15, 90, 40, step=5)
-    st.caption(
-        "Isso só ajusta o tamanho das falas geradas pela IA (frases mais "
-        "longas/curtas). A duração final exata só é conhecida depois do "
-        "áudio pronto."
-    )
-
     if "comparison_script" not in st.session_state:
         st.session_state.comparison_script = None
 
     if st.button("📝 Gerar roteiro da comparação"):
         with st.spinner("Gerando roteiro..."):
-            st.session_state.comparison_script = generate_comparison_script(
-                item1, item2, language,
-                target_seconds=duration_seconds,
+            st.session_state.comparison_script = generate_comparison_topics(
+                comparison_topic, n_pairs, language,
+                target_seconds=comparison_duration_seconds,
                 groq_api_key=groq_api_key or None,
                 use_ollama=ollama_ok, ollama_model=ollama_model,
             )
 
     if st.session_state.comparison_script:
-        st.header("2. Revise e edite as falas")
-        d = st.session_state.comparison_script
-        c1, c2 = st.columns(2)
-        d["item1_title"] = c1.text_input("Título exibido - item 1", d["item1_title"])
-        d["item2_title"] = c2.text_input("Título exibido - item 2", d["item2_title"])
-        d["item1_image_query"] = c1.text_input("Busca de imagem - item 1 (inglês)", d["item1_image_query"])
-        d["item2_image_query"] = c2.text_input("Busca de imagem - item 2 (inglês)", d["item2_image_query"])
-        d["intro1_text"] = st.text_area("Fala 1 — apresenta o item 1", d["intro1_text"])
-        d["intro2_text"] = st.text_area("Fala 2 — apresenta o item 2 e pergunta a diferença", d["intro2_text"])
-        d["explain1_text"] = st.text_area("Fala 3 — explica o item 1 (coruja aponta pra ele)", d["explain1_text"])
-        d["explain2_text"] = st.text_area("Fala 4 — explica o item 2 (coruja vira pro outro lado)", d["explain2_text"])
-        st.session_state.comparison_script = d
+        st.header("2. Revise e edite os pares de comparação")
+        comp_df = pd.DataFrame(st.session_state.comparison_script)
+        # Reordena as colunas pra ficar mais fácil de ler/editar na tabela.
+        column_order = [
+            "item1_title", "item2_title",
+            "item1_image_query", "item2_image_query",
+            "intro1_text", "intro2_text",
+            "explain1_text", "explain2_text",
+        ]
+        comp_df = comp_df[[c for c in column_order if c in comp_df.columns]]
+        edited_comp_df = st.data_editor(
+            comp_df, num_rows="dynamic", use_container_width=True,
+            column_config={
+                "item1_title": "Item 1",
+                "item2_title": "Item 2",
+                "item1_image_query": "Busca imagem 1 (EN)",
+                "item2_image_query": "Busca imagem 2 (EN)",
+                "intro1_text": "Fala: apresenta item 1",
+                "intro2_text": "Fala: apresenta item 2 + pergunta",
+                "explain1_text": "Fala: explica item 1",
+                "explain2_text": "Fala: explica item 2",
+            },
+        )
+        st.session_state.comparison_script = edited_comp_df.to_dict(orient="records")
 
         st.header("3. Gerar vídeo")
         if st.button("🎥 Renderizar vídeo final"):
             progress = st.progress(0.0, text="Iniciando...")
-
-            progress.progress(0.1, text=f"Buscando imagem: {d['item1_title']}")
-            img1_path = "output/images/item1.jpg"
-            ok1 = fetch_image_for_item(d["item1_image_query"], img1_path)
-
-            progress.progress(0.2, text=f"Buscando imagem: {d['item2_title']}")
-            img2_path = "output/images/item2.jpg"
-            ok2 = fetch_image_for_item(d["item2_image_query"], img2_path)
+            pairs = st.session_state.comparison_script
+            n = len(pairs)
 
             if not owl_path:
-                progress.progress(0.3, text="Buscando imagem do apresentador (coruja)...")
+                progress.progress(0.02, text="Buscando imagem do apresentador (coruja)...")
                 owl_path = "output/images/owl.jpg"
                 fetch_image_for_item(
                     "cute cartoon owl professor top hat monocle pointing white background", owl_path
                 )
             if not owl_thinking_path:
-                progress.progress(0.32, text="Buscando imagem da coruja pensativa...")
+                progress.progress(0.04, text="Buscando imagem da coruja pensativa...")
                 candidate = "output/images/owl_thinking.jpg"
                 found = fetch_image_for_item(
                     "cute cartoon owl professor top hat monocle thinking pose white background",
@@ -267,36 +279,54 @@ else:
                 )
                 owl_thinking_path = candidate if found else owl_path
 
-            if not (ok1 and ok2):
-                st.error("Não consegui achar imagem pra um dos dois itens. Ajuste os termos de busca e tente de novo.")
-            else:
-                labels = ["intro1", "intro2", "explain1", "explain2"]
-                texts = [d["intro1_text"], d["intro2_text"], d["explain1_text"], d["explain2_text"]]
+            video_pairs = []
+            labels = ["intro1", "intro2", "explain1", "explain2"]
+            for idx, pair in enumerate(pairs):
+                base = 0.05 + (idx / n) * 0.9
+                step = 0.9 / n
+
+                progress.progress(base, text=f"Par {idx+1}/{n}: buscando imagens...")
+                img1_path = f"output/images/pair{idx}_item1.jpg"
+                img2_path = f"output/images/pair{idx}_item2.jpg"
+                ok1 = fetch_image_for_item(str(pair["item1_image_query"]), img1_path)
+                ok2 = fetch_image_for_item(str(pair["item2_image_query"]), img2_path)
+
+                if not (ok1 and ok2):
+                    st.warning(
+                        f"Não achei imagem pra um dos itens do par {idx+1} "
+                        f"('{pair['item1_title']}' x '{pair['item2_title']}'), pulei esse par."
+                    )
+                    continue
+
+                texts = [pair["intro1_text"], pair["intro2_text"], pair["explain1_text"], pair["explain2_text"]]
                 audio_paths = {}
-                for i, (label, text) in enumerate(zip(labels, texts)):
-                    progress.progress(0.35 + i * 0.12, text=f"Gerando voz: {label}")
-                    path = f"output/audio/{label}.wav"
-                    synthesize(text, path, language_id=language, voice=selected_voice)
+                for j, (label, text) in enumerate(zip(labels, texts)):
+                    progress.progress(base + step * (j + 1) / 5, text=f"Par {idx+1}/{n}: gerando voz ({label})")
+                    path = f"output/audio/pair{idx}_{label}.wav"
+                    synthesize(str(text), path, language_id=language, voice=selected_voice)
                     audio_paths[f"{label}_audio"] = path
 
-                video_data = {
-                    "item1_title": d["item1_title"],
+                video_pairs.append({
+                    "item1_title": str(pair["item1_title"]),
                     "item1_image_path": img1_path,
-                    "item2_title": d["item2_title"],
+                    "item2_title": str(pair["item2_title"]),
                     "item2_image_path": img2_path,
-                    "intro1_text": d["intro1_text"],
-                    "intro2_text": d["intro2_text"],
-                    "explain1_text": d["explain1_text"],
-                    "explain2_text": d["explain2_text"],
+                    "intro1_text": str(pair["intro1_text"]),
+                    "intro2_text": str(pair["intro2_text"]),
+                    "explain1_text": str(pair["explain1_text"]),
+                    "explain2_text": str(pair["explain2_text"]),
                     **audio_paths,
-                }
+                })
 
-                progress.progress(0.9, text="Montando vídeo final...")
+            if not video_pairs:
+                st.error("Nenhum par pôde ser renderizado. Ajuste os termos de busca e tente de novo.")
+            else:
+                progress.progress(0.97, text="Montando vídeo final...")
                 out_path = "output/video_final.mp4"
-                build_comparison_video(video_data, owl_path, out_path, owl_thinking_path=owl_thinking_path)
+                build_multi_comparison_video(video_pairs, owl_path, out_path, owl_thinking_path=owl_thinking_path)
                 progress.progress(1.0, text="Pronto!")
 
-                st.success("Vídeo gerado com sucesso!")
+                st.success(f"Vídeo gerado com sucesso! ({len(video_pairs)} pares de comparação)")
                 st.video(out_path)
                 with open(out_path, "rb") as f:
                     st.download_button("⬇️ Baixar vídeo", f, file_name="video_final.mp4")
