@@ -1,3 +1,4 @@
 espeak-ng
 imagemagick
 fonts-dejavu-core
+fontconfig
