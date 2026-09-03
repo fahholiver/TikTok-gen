@@ -177,19 +177,42 @@ else:
     item2 = col2.text_input("Item 2", "Zombie")
 
     st.subheader("Apresentador (coruja)")
-    owl_file = st.file_uploader(
-        "Envie uma imagem do apresentador (opcional — fundo branco funciona melhor). "
-        "Se não enviar, o app busca uma imagem de coruja com cartola e monóculo na web.",
+    col_a, col_b = st.columns(2)
+    owl_file = col_a.file_uploader(
+        "Coruja apontando (padrão)",
         type=["jpg", "jpeg", "png"],
+        help="Fundo branco funciona melhor. Se não enviar, o app busca uma imagem na web.",
     )
+    owl_thinking_file = col_b.file_uploader(
+        "Coruja pensativa (pergunta)",
+        type=["jpg", "jpeg", "png"],
+        help="Usada só na cena em que ela pergunta 'qual a diferença?'. "
+             "Se não enviar, reusa a imagem padrão.",
+    )
+
+    os.makedirs("assets", exist_ok=True)
     if owl_file:
-        os.makedirs("assets", exist_ok=True)
         owl_path = "assets/owl_custom.jpg"
         with open(owl_path, "wb") as f:
             f.write(owl_file.read())
-        st.image(owl_path, width=150)
+        col_a.image(owl_path, width=120)
     else:
         owl_path = None  # será buscado na hora de renderizar
+
+    if owl_thinking_file:
+        owl_thinking_path = "assets/owl_thinking_custom.jpg"
+        with open(owl_thinking_path, "wb") as f:
+            f.write(owl_thinking_file.read())
+        col_b.image(owl_thinking_path, width=120)
+    else:
+        owl_thinking_path = None  # cai no fallback (reusa a padrão)
+
+    duration_seconds = st.slider("Duração aproximada do vídeo (segundos)", 15, 90, 40, step=5)
+    st.caption(
+        "Isso só ajusta o tamanho das falas geradas pela IA (frases mais "
+        "longas/curtas). A duração final exata só é conhecida depois do "
+        "áudio pronto."
+    )
 
     if "comparison_script" not in st.session_state:
         st.session_state.comparison_script = None
@@ -198,6 +221,7 @@ else:
         with st.spinner("Gerando roteiro..."):
             st.session_state.comparison_script = generate_comparison_script(
                 item1, item2, language,
+                target_seconds=duration_seconds,
                 groq_api_key=groq_api_key or None,
                 use_ollama=ollama_ok, ollama_model=ollama_model,
             )
@@ -232,8 +256,16 @@ else:
                 progress.progress(0.3, text="Buscando imagem do apresentador (coruja)...")
                 owl_path = "output/images/owl.jpg"
                 fetch_image_for_item(
-                    "cute cartoon owl professor top hat monocle white background", owl_path
+                    "cute cartoon owl professor top hat monocle pointing white background", owl_path
                 )
+            if not owl_thinking_path:
+                progress.progress(0.32, text="Buscando imagem da coruja pensativa...")
+                candidate = "output/images/owl_thinking.jpg"
+                found = fetch_image_for_item(
+                    "cute cartoon owl professor top hat monocle thinking pose white background",
+                    candidate,
+                )
+                owl_thinking_path = candidate if found else owl_path
 
             if not (ok1 and ok2):
                 st.error("Não consegui achar imagem pra um dos dois itens. Ajuste os termos de busca e tente de novo.")
@@ -261,7 +293,7 @@ else:
 
                 progress.progress(0.9, text="Montando vídeo final...")
                 out_path = "output/video_final.mp4"
-                build_comparison_video(video_data, owl_path, out_path)
+                build_comparison_video(video_data, owl_path, out_path, owl_thinking_path=owl_thinking_path)
                 progress.progress(1.0, text="Pronto!")
 
                 st.success("Vídeo gerado com sucesso!")
