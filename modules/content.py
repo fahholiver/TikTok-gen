@@ -113,7 +113,10 @@ def _call_ollama(prompt: str, model: str = "llama3.1") -> str:
 
 def _build_list_prompt(topic: str, n_items: int, language: str) -> str:
     lang_name = LANGUAGE_NAMES.get(language, "português do Brasil")
-    return f"""Crie um roteiro para um vídeo curto (estilo TikTok educativo) sobre o tema: "{topic}".
+    return f"""IDIOMA OBRIGATÓRIO: {lang_name}. Todo texto que você escrever (exceto "image_query") \
+deve estar 100% em {lang_name}, sem nenhuma palavra em outro idioma.
+
+Crie um roteiro para um vídeo curto (estilo TikTok educativo) sobre o tema: "{topic}".
 
 Gere exatamente {n_items} itens. Para cada item, retorne:
 - "title": nome curto do item (1 a 3 palavras), escrito em {lang_name}
@@ -121,9 +124,11 @@ Gere exatamente {n_items} itens. Para cada item, retorne:
   uma imagem CLARA E REPRESENTATIVA desse item específico. Inclua: tipo de imagem (photo, movie still, 
   illustration, portrait), contexto visual importante, cores ou características que ajudem a diferenciar 
   de outros itens. Ex: "classic horror movie mummy wrapped in bandages film still" em vez de só "mummy".
+  (Este campo é a ÚNICA exceção à regra de idioma acima — sempre em inglês.)
 - "narration": 1 a 2 frases curtas e didáticas, tom curioso, para narração em voz alta, escrita em {lang_name}
 
-Responda APENAS com um JSON válido, uma lista de {n_items} objetos, sem nenhum texto antes ou depois, sem markdown, sem explicações."""
+Lembrete final: "title" e "narration" DEVEM estar em {lang_name}. Responda APENAS com um JSON \
+válido, uma lista de {n_items} objetos, sem nenhum texto antes ou depois, sem markdown, sem explicações."""
 
 
 def _parse_json_list(text: str) -> list[dict]:
@@ -210,7 +215,10 @@ def _build_comparison_topic_prompt(topic: str, n_pairs: int, language: str,
             f"perto de {target_seconds}s no total."
         )
 
-    return f"""Crie o roteiro de um vídeo curto (estilo TikTok educativo, formato "coruja \
+    return f"""IDIOMA OBRIGATÓRIO: {lang_name}. Todos os campos de texto (exceto os que terminam \
+em "_image_query") devem estar 100% em {lang_name}, sem nenhuma palavra em outro idioma.
+
+Crie o roteiro de um vídeo curto (estilo TikTok educativo, formato "coruja \
 professora" comparando pares de conceitos, um par de cada vez) sobre o tema: "{topic}".
 
 Invente exatamente {n_pairs} pares de comparação DIFERENTES e interessantes relacionados a \
@@ -239,6 +247,9 @@ durante a lua cheia." (sem dizer o nome, fica confuso pra quem está assistindo)
 - "explain2_text": mesma regra do explain1_text, mas para o item 2 — DEVE começar citando o \
 nome do item 2 (igual a "item2_title")
 {length_hint}
+Lembrete final: item1_title, item2_title, intro1_text, intro2_text, explain1_text e explain2_text \
+DEVEM estar em {lang_name}. Apenas item1_image_query e item2_image_query devem estar em inglês.
+
 Responda APENAS com um JSON válido no formato {{"comparisons": [ ... ]}}, contendo uma lista \
 com exatamente {n_pairs} objetos como descrito acima, sem nenhum texto antes ou depois, sem \
 markdown, sem explicações."""
