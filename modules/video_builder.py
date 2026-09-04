@@ -17,7 +17,7 @@ import os
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from moviepy import (
-    ImageClip, TextClip, CompositeVideoClip, AudioFileClip,
+    ImageClip, CompositeVideoClip, AudioFileClip,
     concatenate_videoclips, ColorClip,
 )
 
@@ -78,9 +78,15 @@ def _render_text_to_image(text: str, font_size: int, width: int, height: int,
                           color: str = "black", font_path: str = None) -> np.ndarray:
     """
     Renderiza texto centralizado como imagem usando PIL, com quebra de linha
-    automática (word wrap) para caber na largura disponível. Usado como
-    último recurso caso NENHUMA fonte TrueType seja encontrada (o que não
-    deveria acontecer, já que a fonte vem embutida no projeto).
+    automática (word wrap) para caber na largura disponível.
+
+    IMPORTANTE: usamos SEMPRE esta função em vez do TextClip(method="caption")
+    do moviepy. A função interna de quebra de linha do moviepy 2.x
+    (TextClip.__break_text) tem um bug: ela guarda a posição do último
+    espaço como índice do TEXTO INTEIRO, mas usa esse índice pra cortar a
+    LINHA ATUAL (bem mais curta) — a partir da 2ª linha isso corta palavras
+    no meio (ex: "leaves" virava "leav"/"es"). O wrap manual abaixo, por
+    palavra inteira, não tem esse problema.
     """
     img = Image.new('RGB', (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(img)
@@ -151,33 +157,18 @@ def build_card_clip(image_path: str, title: str, narration_text: str,
            .with_position(("center", int(H * 0.30)))
            .with_duration(duration))
 
-    # Título
-    if font is None:
-        # Renderiza como imagem PIL
-        title_img = _render_text_to_image(title, font_size=80, width=int(W * 0.90), height=int(H * 0.15), color="black", font_path=font)
-        title_clip = (ImageClip(title_img)
-                      .with_position(("center", int(H * 0.08)))
-                      .with_duration(duration))
-    else:
-        # Usa TextClip do moviepy
-        title_clip = (TextClip(text=title, font_size=80, color="black", font=font,
-                                method="caption", size=(int(W * 0.90), int(H * 0.15)))
-                      .with_position(("center", int(H * 0.08)))
-                      .with_duration(duration))
+    # Título — renderizado sempre via PIL (ver nota em _render_text_to_image
+    # sobre o bug de quebra de linha do TextClip do moviepy).
+    title_img = _render_text_to_image(title, font_size=80, width=int(W * 0.90), height=int(H * 0.15), color="black", font_path=font)
+    title_clip = (ImageClip(title_img)
+                  .with_position(("center", int(H * 0.08)))
+                  .with_duration(duration))
 
-    # Legenda
-    if font is None:
-        # Renderiza como imagem PIL
-        caption_img = _render_text_to_image(narration_text, font_size=50, width=int(W * 0.85), height=int(H * 0.28), color="black", font_path=font)
-        caption_clip = (ImageClip(caption_img)
-                        .with_position(("center", int(H * 0.58)))
-                        .with_duration(duration))
-    else:
-        # Usa TextClip do moviepy
-        caption_clip = (TextClip(text=narration_text, font_size=50, color="black", font=font,
-                                  method="caption", size=(int(W * 0.85), int(H * 0.28)))
-                        .with_position(("center", int(H * 0.58)))
-                        .with_duration(duration))
+    # Legenda — idem, sempre via PIL.
+    caption_img = _render_text_to_image(narration_text, font_size=50, width=int(W * 0.85), height=int(H * 0.28), color="black", font_path=font)
+    caption_clip = (ImageClip(caption_img)
+                    .with_position(("center", int(H * 0.58)))
+                    .with_duration(duration))
 
     card = CompositeVideoClip([bg, img, title_clip, caption_clip], size=(W, H))
     card = card.with_audio(audio)
@@ -252,22 +243,15 @@ def _bg(duration):
 
 
 def _title_clip(text, x, w, y, duration, font=None, font_size=42):
-    """Cria um clipe de texto para título. Usa PIL se fonte TrueType não existir.
+    """Cria um clipe de texto para título. Renderizado sempre via PIL (ver
+    nota em _render_text_to_image sobre o bug de quebra de linha do
+    TextClip do moviepy — ele corta palavras no meio a partir da 2ª linha).
     font_size reduzido (era 56) pra caber palavras longas sem cortar/quebrar
     no meio. Se o título tiver 2 palavras, elas podem quebrar linha entre si
     normalmente — o que evitamos é quebrar DENTRO de uma palavra."""
     resolved_font = _resolve_font(font)
-    
-    # Se não achou fonte TrueType, renderiza como imagem com PIL
-    if resolved_font is None:
-        img_array = _render_text_to_image(text, font_size=font_size, width=w, height=int(H * 0.12), color="black", font_path=resolved_font)
-        return (ImageClip(img_array)
-                .with_position((x, y))
-                .with_duration(duration))
-    
-    # Se achou font TrueType, usa moviepy TextClip (mais eficiente)
-    return (TextClip(text=text, font_size=font_size, color="black", font=resolved_font,
-                      method="caption", size=(w, int(H * 0.12)))
+    img_array = _render_text_to_image(text, font_size=font_size, width=w, height=int(H * 0.12), color="black", font_path=resolved_font)
+    return (ImageClip(img_array)
             .with_position((x, y))
             .with_duration(duration))
 
@@ -302,19 +286,12 @@ def _owl_clip(owl_image_path, duration, flip=False, width_frac=0.5):
 
 
 def _caption_clip(text, duration, font=None):
-    """Cria um clipe de legenda/narração. Usa PIL se fonte TrueType não existir."""
+    """Cria um clipe de legenda/narração. Renderizado sempre via PIL (ver
+    nota em _render_text_to_image sobre o bug de quebra de linha do
+    TextClip do moviepy)."""
     resolved_font = _resolve_font(font)
-    
-    # Se não achou fonte TrueType, renderiza como imagem com PIL
-    if resolved_font is None:
-        img_array = _render_text_to_image(text, font_size=40, width=_CAPTION_W, height=_CAPTION_H, color="black", font_path=resolved_font)
-        return (ImageClip(img_array)
-                .with_position(("center", _CAPTION_Y))
-                .with_duration(duration))
-    
-    # Se achou font TrueType, usa moviepy TextClip (mais eficiente)
-    return (TextClip(text=text, font_size=40, color="black", font=resolved_font,
-                      method="caption", size=(_CAPTION_W, _CAPTION_H))
+    img_array = _render_text_to_image(text, font_size=40, width=_CAPTION_W, height=_CAPTION_H, color="black", font_path=resolved_font)
+    return (ImageClip(img_array)
             .with_position(("center", _CAPTION_Y))
             .with_duration(duration))
 
